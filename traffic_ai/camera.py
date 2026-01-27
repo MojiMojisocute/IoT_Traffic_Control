@@ -106,17 +106,10 @@ class Camera:
                 if not ret or frame is None:
                     self.failed_reads += 1
                     
-                    if self.failed_reads > 10:
-                        if not self._reconnect():
-                            return self.last_frame
-                        
-                        ret, frame = self.cap.read()
-                        if not ret or frame is None:
-                            return self.last_frame
-                        
-                        self.failed_reads = 0
-                    else:
+                    if self.failed_reads > 10 and not self._reconnect():
                         return self.last_frame
+                    
+                    return self.last_frame
                 
                 frame = self._preprocess_frame(frame)
                 

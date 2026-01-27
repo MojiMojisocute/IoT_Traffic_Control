@@ -8,14 +8,16 @@ import os
 import shutil
 import warnings
 from pathlib import Path
+from collections import deque
 
 warnings.filterwarnings('ignore')
 os.environ['YOLOv8_VERBOSE'] = '0'
 
 try:
     from camera import Camera
-    from yolo_detector import YOLODetector
+    from vehicle_detector import YOLODetector
     from vehicle_tracker import VehicleTrackerCounter
+    from roi_selector import load_line_config
 except ImportError as e:
     print(f"Import error: {e}")
     sys.exit(1)
@@ -30,7 +32,7 @@ def cleanup_runs_folder():
             print(f"⚠ Could not delete runs/: {e}")
 
 
-def draw_tracks(frame, tracks):
+def draw_tracks(frame, tracks, counting_lines=None):
     color = (0, 255, 0)
     
     for track in tracks:
@@ -43,6 +45,16 @@ def draw_tracks(frame, tracks):
         
         cx, cy = track['center']
         cv2.circle(frame, (cx, cy), 4, color, -1)
+    
+    if counting_lines:
+        for name, polygon in counting_lines.items():
+            pts = np.array(polygon, np.int32)
+            cv2.polylines(frame, [pts], True, (255, 0, 0), 2)
+            
+            cx = sum(p[0] for p in polygon) // len(polygon)
+            cy = sum(p[1] for p in polygon) // len(polygon)
+            cv2.putText(frame, name, (cx - 20, cy), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
 
 def draw_stats(frame, tracker, detector, counts, fps):
@@ -88,7 +100,7 @@ def main():
             source=VIDEO_PATH,
             width=1280,
             height=720,
-            fps=30,
+            fps=60,
             use_cuda=True
         )
         
@@ -105,9 +117,9 @@ def main():
     print("\n[2/4] Initializing YOLO...")
     try:
         detector = YOLODetector(
-            confidence_threshold=0.3,
-            nms_threshold=0.3,
-            input_size=640,
+            confidence_threshold=0.1,
+            nms_threshold=0.1,
+            input_size=1280,
             device='cuda',
             half_precision=True
         )
@@ -121,16 +133,27 @@ def main():
     
     print("\n[3/4] Initializing Tracker...")
     try:
+        counting_lines = load_line_config('data/config/line_config.json')
+        
+        if not counting_lines:
+            print("⚠  No line config found - create one with line_selector.py")
+            counting_lines = {}
+        else:
+            print(f"✓ Loaded {len(counting_lines)} counting lines")
+        
         tracker = VehicleTrackerCounter(
             frame_width=width,
             frame_height=height,
             max_age=30,
             min_hits=3,
-            iou_threshold=0.3
+            iou_threshold=0.3,
+            counting_lines=counting_lines
         )
         print(f"✓ Tracker ready")
     except Exception as e:
         print(f"✗ Tracker error: {e}")
+        import traceback
+        traceback.print_exc()
         camera.release()
         return
     
@@ -151,7 +174,7 @@ def main():
     print("System Ready!")
     print("=" * 80)
     
-    fps_buffer = []
+    fps_buffer = deque(maxlen=30)
     last_time = time.time()
     last_serial_time = time.time()
     paused = False
@@ -169,30 +192,21 @@ def main():
                 detections = detector.detect(frame)
                 tracks, counts = tracker.update(detections)
                 
-                cleanup_runs_folder()
-                
                 current_time = time.time()
                 fps = 1.0 / (current_time - last_time) if (current_time - last_time) > 0 else 0
                 last_time = current_time
                 
                 fps_buffer.append(fps)
-                if len(fps_buffer) > 30:
-                    fps_buffer.pop(0)
                 avg_fps = sum(fps_buffer) / len(fps_buffer)
                 
-                draw_tracks(frame, tracks)
+                draw_tracks(frame, tracks, tracker.counting_lines)
                 draw_stats(frame, tracker, detector, counts, avg_fps)
                 
                 if serial_port and serial_port.is_open:
                     if current_time - last_serial_time >= SERIAL_UPDATE_INTERVAL:
                         active_count = tracker.active_tracks
                         
-                        if active_count <= 5:
-                            density = "low"
-                        elif active_count <= 15:
-                            density = "medium"
-                        else:
-                            density = "high"
+                        density = "low" if active_count <= 5 else "medium" if active_count <= 15 else "high"
                         
                         data = {
                             "count": active_count,
