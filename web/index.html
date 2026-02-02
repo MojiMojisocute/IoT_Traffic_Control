@@ -3,53 +3,70 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Traffic Light Monitor</title>
+    <title>Traffic Report</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Itim&family=Jaro:opsz@6..72&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>🚦 Smart Traffic Light</h1>
-        <p class="subtitle">Real-time Traffic Control System</p>
-
-        <div class="status">
-            <div class="status-dot" id="statusDot"></div>
-            <span id="statusText">Connecting...</span>
+    <header class="header">
+        <div class="header-content">
+            <div class="logo">mojimoji</div>
+            <div class="divider"></div>
+            <div class="title">Traffic Report</div>
         </div>
+    </header>
 
-        <div class="traffic-light">
-            <div class="light red" id="redLight"></div>
-            <div class="light yellow" id="yellowLight"></div>
-            <div class="light green" id="greenLight"></div>
-        </div>
+    <main class="main">
+        <h2 class="page-title">Traffic overview</h2>
 
-        <div class="countdown">
-            <div class="countdown-value" id="countdown">--</div>
-            <div class="countdown-label">Seconds Remaining</div>
-        </div>
-
-        <div class="info-grid">
-            <div class="info-card">
-                <h3>Vehicles</h3>
-                <div class="value" id="vehicles">0</div>
-                <div class="unit">Currently Detected</div>
-            </div>
-
-            <div class="info-card">
-                <h3>Traffic Density</h3>
-                <div class="value" id="density">--</div>
-                <div class="unit">Status</div>
-                <div class="density-bar">
-                    <div class="density-fill" id="densityBar"></div>
+        <div class="container">
+            <div class="device-name">
+                <span>esp32 - name</span>
+                <div class="status-badge disconnected" id="statusBadge">
+                    <span class="status-dot"></span>
+                    <span id="statusText">Disconnected</span>
                 </div>
             </div>
 
-            <div class="info-card">
-                <h3>Current Light</h3>
-                <div class="value" id="currentLight">--</div>
-                <div class="unit">Active Signal</div>
+            <div class="content-grid">
+                <!-- Traffic Light & Countdown -->
+                <div class="left-section">
+                    <div class="traffic-light">
+                        <div class="light red-light" id="redLight"></div>
+                        <div class="light yellow-light" id="yellowLight"></div>
+                        <div class="light green-light" id="greenLight"></div>
+                    </div>
+
+                    <div class="countdown-card">
+                        <div class="countdown-number" id="countdown">--</div>
+                        <div class="countdown-unit">sec</div>
+                        <div class="light-status standby" id="currentLight">Standby</div>
+                    </div>
+                </div>
+
+                <!-- Metrics -->
+                <div class="right-section">
+                    <div class="metric-card">
+                        <div class="metric-label">Vehicles</div>
+                        <div class="metric-value" id="vehicles">--</div>
+                        <div class="metric-bar">
+                            <div class="metric-fill" id="vehicleBar" style="width: 0%;"></div>
+                        </div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-label">Density</div>
+                        <div class="metric-value" id="density">--</div>
+                        <div class="metric-bar">
+                            <div class="metric-fill" id="densityBar" style="width: 0%;"></div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
-    </div>
+    </main>
 
     <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
     <script src="script.js"></script>
