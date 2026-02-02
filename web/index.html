@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Traffic Light Monitor</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>🚦 Smart Traffic Light</h1>
+        <p class="subtitle">Real-time Traffic Control System</p>
+
+        <div class="status">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">Connecting...</span>
+        </div>
+
+        <div class="traffic-light">
+            <div class="light red" id="redLight"></div>
+            <div class="light yellow" id="yellowLight"></div>
+            <div class="light green" id="greenLight"></div>
+        </div>
+
+        <div class="countdown">
+            <div class="countdown-value" id="countdown">--</div>
+            <div class="countdown-label">Seconds Remaining</div>
+        </div>
+
+        <div class="info-grid">
+            <div class="info-card">
+                <h3>Vehicles</h3>
+                <div class="value" id="vehicles">0</div>
+                <div class="unit">Currently Detected</div>
+            </div>
+
+            <div class="info-card">
+                <h3>Traffic Density</h3>
+                <div class="value" id="density">--</div>
+                <div class="unit">Status</div>
+                <div class="density-bar">
+                    <div class="density-fill" id="densityBar"></div>
+                </div>
+            </div>
+
+            <div class="info-card">
+                <h3>Current Light</h3>
+                <div class="value" id="currentLight">--</div>
+                <div class="unit">Active Signal</div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>

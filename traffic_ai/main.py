@@ -1,9 +1,10 @@
+#!/usr/bin/env python3
+
 import cv2
 import numpy as np
 import time
 import sys
 import serial
-import json
 import os
 import shutil
 import warnings
@@ -11,7 +12,7 @@ from pathlib import Path
 from collections import deque
 
 warnings.filterwarnings('ignore')
-os.environ['YOLOv8_VERBOSE'] = '0'
+os.environ['YOLO_VERBOSE'] = 'False'
 
 try:
     from camera import Camera
@@ -27,268 +28,200 @@ def cleanup_runs_folder():
     if os.path.exists('runs'):
         try:
             shutil.rmtree('runs')
-            print("✓ Deleted runs/ folder")
-        except Exception as e:
-            print(f"⚠ Could not delete runs/: {e}")
+        except:
+            pass
 
 
 def draw_tracks(frame, tracks, counting_lines=None):
-    color = (0, 255, 0)
-    
     for track in tracks:
         x, y, w, h = track['bbox']
         track_id = track['track_id']
         
-        cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
-        label = f"ID:{track_id}"
-        cv2.putText(frame, label, (x, y-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+        cv2.putText(frame, f"ID:{track_id}", (x, y-5), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
         cx, cy = track['center']
-        cv2.circle(frame, (cx, cy), 4, color, -1)
+        cv2.circle(frame, (cx, cy), 4, (0, 255, 0), -1)
     
     if counting_lines:
         for name, polygon in counting_lines.items():
             pts = np.array(polygon, np.int32)
             cv2.polylines(frame, [pts], True, (255, 0, 0), 2)
-            
-            cx = sum(p[0] for p in polygon) // len(polygon)
-            cy = sum(p[1] for p in polygon) // len(polygon)
-            cv2.putText(frame, name, (cx - 20, cy), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
 
-def draw_stats(frame, tracker, detector, counts, fps):
+def draw_stats(frame, tracker, fps, counting_time, serial_status):
     y = 30
     
-    cv2.putText(frame, f"FPS: {fps:.1f} | Frame: {tracker.frame_count}", 
+    cv2.putText(frame, f"FPS: {fps:.1f}", 
                (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
     
     y += 30
-    cv2.putText(frame, f"Active: {tracker.active_tracks} | Total: {tracker.total_tracks}", 
-               (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-    
-    y += 25
-    cv2.putText(frame, f"Device: {detector.device.upper()}", 
-               (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    cv2.putText(frame, f"Vehicles: {tracker.active_tracks}", 
+               (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
     
     y += 30
-    cv2.putText(frame, "Q=Quit | S=Stats | P=Pause", 
-               (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+    cv2.putText(frame, f"Time: {counting_time}s", 
+               (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+    
+    y += 30
+    color = (0, 255, 0) if serial_status else (0, 0, 255)
+    status = "OK" if serial_status else "ERROR"
+    cv2.putText(frame, f"Serial: {status}", 
+               (10, y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
 
 def main():
     print("=" * 80)
-    print("SMART TRAFFIC MONITORING SYSTEM - SERIAL COMMUNICATION")
-    print("=" * 80)
+    print(" SMART TRAFFIC AI SYSTEM")
+    print("=" * 80 + "\n")
     
     cleanup_runs_folder()
     
     VIDEO_PATH = "data/testing/test3.mp4"
     SERIAL_PORT = "/dev/ttyUSB0"
-    SERIAL_BAUDRATE = 115200
-    SERIAL_UPDATE_INTERVAL = 1.0
     
     if not Path(VIDEO_PATH).exists():
-        print(f"✗ Video not found: {VIDEO_PATH}")
+        print(f"ERROR: Video not found: {VIDEO_PATH}")
         return
     
-    print(f"✓ Video: {VIDEO_PATH}")
-    
-    print("\n[1/4] Initializing Camera...")
+    print("[1/5] Opening serial port...")
+    ser = None
     try:
-        camera = Camera(
-            source=VIDEO_PATH,
-            width=1280,
-            height=720,
-            fps=60,
-            use_cuda=True
-        )
-        
-        if not camera.is_available():
-            print("Failed to open camera")
-            return
-        
-        width, height = camera.get_resolution()
-        print(f"✓ Camera: {width}x{height} | CUDA: {camera.cuda_available}")
+        ser = serial.Serial(SERIAL_PORT, 115200, timeout=1)
+        time.sleep(2)
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        print(f"Serial port opened: {SERIAL_PORT}")
     except Exception as e:
-        print(f"✗ Camera error: {e}")
+        print(f"WARNING: Cannot open serial port: {e}")
+        print("Continue without serial communication")
+    
+    print("\n[2/5] Initializing camera...")
+    camera = Camera(source=VIDEO_PATH, width=1280, height=720, fps=60, use_cuda=True)
+    if not camera.is_available():
+        print("ERROR: Camera initialization failed")
+        if ser:
+            ser.close()
         return
+    print("Camera ready")
     
-    print("\n[2/4] Initializing YOLO...")
-    try:
-        detector = YOLODetector(
-            confidence_threshold=0.1,
-            nms_threshold=0.1,
-            input_size=1280,
-            device='cuda',
-            half_precision=True
-        )
-        print(f"✓ YOLO: {detector.backend} | Device: {detector.device}")
-    except Exception as e:
-        print(f"✗ YOLO error: {e}")
-        camera.release()
-        return
+    print("\n[3/5] Loading YOLO detector...")
+    detector = YOLODetector(
+        confidence_threshold=0.1, 
+        nms_threshold=0.1, 
+        device='cuda', 
+        half_precision=True
+    )
+    print("YOLO ready")
     
-    cleanup_runs_folder()
+    print("\n[4/5] Initializing vehicle tracker...")
+    counting_lines = load_line_config('data/config/line_config.json')
+    tracker = VehicleTrackerCounter(
+        frame_width=1280, 
+        frame_height=720,
+        max_age=30, 
+        min_hits=3, 
+        iou_threshold=0.3,
+        counting_lines=counting_lines
+    )
+    print("Tracker ready")
     
-    print("\n[3/4] Initializing Tracker...")
-    try:
-        counting_lines = load_line_config('data/config/line_config.json')
-        
-        if not counting_lines:
-            print("⚠  No line config found - create one with line_selector.py")
-            counting_lines = {}
-        else:
-            print(f"✓ Loaded {len(counting_lines)} counting lines")
-        
-        tracker = VehicleTrackerCounter(
-            frame_width=width,
-            frame_height=height,
-            max_age=30,
-            min_hits=3,
-            iou_threshold=0.3,
-            counting_lines=counting_lines
-        )
-        print(f"✓ Tracker ready")
-    except Exception as e:
-        print(f"✗ Tracker error: {e}")
-        import traceback
-        traceback.print_exc()
-        camera.release()
-        return
-    
-    print("\n[4/4] Initializing Serial Connection...")
-    serial_port = None
-    try:
-        serial_port = serial.Serial(
-            port=SERIAL_PORT,
-            baudrate=SERIAL_BAUDRATE,
-            timeout=1
-        )
-        print(f"✓ Serial: {SERIAL_PORT} at {SERIAL_BAUDRATE} baud")
-    except Exception as e:
-        print(f"⚠ Serial connection failed: {e}")
-        print("  Continuing without serial communication")
-    
+    print("\n[5/5] Starting main loop...")
     print("\n" + "=" * 80)
-    print("System Ready!")
-    print("=" * 80)
+    print("SYSTEM RUNNING - Press 'q' to quit")
+    print("=" * 80 + "\n")
     
     fps_buffer = deque(maxlen=30)
-    last_time = time.time()
-    last_serial_time = time.time()
-    paused = False
-    frame = None
+    last_frame_time = time.time()
+    last_serial_send = time.time()
+    
+    counting_time = -1
+    start_time = None
+    
+    frame_count = 0
+    serial_send_count = 0
+    serial_ok = False
     
     try:
         while True:
-            if not paused:
-                frame = camera.get_frame()
-                
-                if frame is None:
-                    time.sleep(0.01)
-                    continue
-                
-                detections = detector.detect(frame)
-                tracks, counts = tracker.update(detections)
-                
-                current_time = time.time()
-                fps = 1.0 / (current_time - last_time) if (current_time - last_time) > 0 else 0
-                last_time = current_time
-                
-                fps_buffer.append(fps)
-                avg_fps = sum(fps_buffer) / len(fps_buffer)
-                
-                draw_tracks(frame, tracks, tracker.counting_lines)
-                draw_stats(frame, tracker, detector, counts, avg_fps)
-                
-                if serial_port and serial_port.is_open:
-                    if current_time - last_serial_time >= SERIAL_UPDATE_INTERVAL:
-                        active_count = tracker.active_tracks
-                        
-                        density = "low" if active_count <= 5 else "medium" if active_count <= 15 else "high"
-                        
-                        data = {
-                            "count": active_count,
-                            "density": density,
-                            "timestamp": int(current_time)
-                        }
-                        
-                        try:
-                            payload = json.dumps(data) + "\n"
-                            serial_port.write(payload.encode('utf-8'))
-                        except:
-                            pass
-                        
-                        last_serial_time = current_time
+            frame = camera.get_frame()
+            if frame is None:
+                time.sleep(0.01)
+                continue
             
-            cv2.imshow("Smart Traffic Monitoring - Serial", frame)
+            detections = detector.detect(frame)
+            tracks, _ = tracker.update(detections)
+            
+            current_time = time.time()
+            
+            fps = 1.0 / (current_time - last_frame_time) if (current_time - last_frame_time) > 0 else 0
+            last_frame_time = current_time
+            fps_buffer.append(fps)
+            avg_fps = sum(fps_buffer) / len(fps_buffer)
+            
+            frame_count += 1
+            
+            if current_time - last_serial_send >= 1.0:
+                count = tracker.active_tracks
+                
+                if count <= 5:
+                    density = "low"
+                elif count <= 15:
+                    density = "medium"
+                else:
+                    density = "high"
+                
+                if start_time is None:
+                    start_time = current_time
+                    counting_time = -1
+                else:
+                    counting_time = int(current_time - start_time)
+                
+                if ser and ser.is_open:
+                    try:
+                        message = f"{count},{counting_time},{density}\n"
+                        ser.write(message.encode('utf-8'))
+                        ser.flush()
+                        serial_send_count += 1
+                        serial_ok = True
+                        print(f"[TX] count={count}, time={counting_time}, density={density}")
+                    except Exception as e:
+                        serial_ok = False
+                        print(f"[ERROR] Serial send failed: {e}")
+                
+                last_serial_send = current_time
+            
+            draw_tracks(frame, tracks, tracker.counting_lines)
+            draw_stats(frame, tracker, avg_fps, counting_time, serial_ok)
+            
+            cv2.imshow("Traffic AI", frame)
             
             key = cv2.waitKey(1) & 0xFF
-            
             if key == ord('q'):
                 break
-            elif key == ord('s'):
-                print("\n" + "=" * 60)
-                print("SYSTEM STATISTICS")
-                print("=" * 60)
-                print("\nCamera:")
-                for k, v in camera.get_health_stats().items():
-                    print(f"   {k}: {v}")
-                print("\nDetector:")
-                for k, v in detector.get_stats().items():
-                    print(f"   {k}: {v}")
-                print("\nTracker:")
-                for k, v in tracker.get_stats().items():
-                    print(f"   {k}: {v}")
-                print("=" * 60 + "\n")
-            elif key == ord('p'):
-                paused = not paused
-                print(f"{'Paused' if paused else 'Resumed'}")
     
     except KeyboardInterrupt:
-        print("\nInterrupted")
-    except Exception as e:
-        print(f"\nError: {e}")
-        import traceback
-        traceback.print_exc()
+        print("\n\nStopped by user")
+    
     finally:
-        print("\nCleaning up...")
+        print("\n" + "=" * 80)
+        print("SHUTTING DOWN")
+        print("=" * 80)
         
-        if serial_port and serial_port.is_open:
-            try:
-                data = {"status": "offline", "timestamp": int(time.time())}
-                payload = json.dumps(data) + "\n"
-                serial_port.write(payload.encode('utf-8'))
-                time.sleep(0.2)
-            except:
-                pass
-            serial_port.close()
+        print(f"\nFrames processed: {frame_count}")
+        print(f"Serial messages sent: {serial_send_count}")
+        
+        if ser and ser.is_open:
+            ser.close()
+            print("Serial port closed")
         
         camera.release()
+        print("Camera released")
+        
         cv2.destroyAllWindows()
-        
         cleanup_runs_folder()
-        
-        print("\n" + "=" * 80)
-        print("FINAL STATISTICS")
-        print("=" * 80)
-        
-        print("\nCamera:")
-        for k, v in camera.get_health_stats().items():
-            print(f"   {k}: {v}")
-        
-        print("\nDetector:")
-        for k, v in detector.get_stats().items():
-            print(f"   {k}: {v}")
-        
-        print("\nTracker:")
-        for k, v in tracker.get_stats().items():
-            print(f"   {k}: {v}")
-        
-        print("\n" + "=" * 80)
-        print("System Stopped")
-        print("=" * 80)
+        print("Cleanup complete\n")
 
 
 if __name__ == "__main__":

@@ -1,213 +1,135 @@
 import time
 import gc
-from machine import Pin
+import sys
 import config
-from utils import format_uptime, print_header, print_dict, Timer
 from led_controller import LEDController
 from serial_handler import SerialHandler
 from traffic_light import TrafficLightController
 
 
-class SmartTrafficSystem:
-    def __init__(self):
-        self.start_time = time.time()
-        self.running = True
-        
-        self.led = None
-        self.serial = None
-        self.traffic = None
-        
-        if config.ENABLE_MANUAL_MODE:
-            self.button = Pin(config.MANUAL_BUTTON_PIN, Pin.IN, Pin.PULL_UP)
-            self.last_button_state = 1
-        
-        self.status_timer = Timer(10)
-        self.serial_check_timer = Timer(config.UPDATE_INTERVAL)
-        self.watchdog_timer = Timer(5)
-        
-        self.loop_count = 0
-        self.errors = 0
-        
-        print_header("ESP32 SMART TRAFFIC LIGHT SYSTEM - SERIAL MODE")
-        print("\nInitializing system...")
-    
-    def initialize(self):
-        print("\n[1/3] Initializing LED Controller...")
-        try:
-            self.led = LEDController()
-            self.led.test_sequence()
-        except Exception as e:
-            print(f"Failed to initialize LED: {e}")
-            return False
-        
-        print("\n[2/3] Initializing Traffic Light Controller...")
-        try:
-            self.traffic = TrafficLightController(self.led)
-        except Exception as e:
-            print(f"Failed to initialize Traffic Controller: {e}")
-            return False
-        
-        print("\n[3/3] Connecting to Serial...")
-        try:
-            self.serial = SerialHandler(on_message_callback=self._on_serial_message)
-            
-            if not self.serial.connect():
-                print("⚠ Serial connection failed - running in offline mode")
-            
-        except Exception as e:
-            print(f"⚠ Serial error: {e} - running in offline mode")
-            self.serial = None
-        
-        print_header("SYSTEM READY")
-        self._print_status()
-        
-        return True
-    
-    def _on_serial_message(self, data):
-        try:
-            if 'density' in data:
-                density = data.get('density', 'low')
-                count = data.get('count', 0)
-                self.traffic.update_traffic_data(count, density)
-            
-            elif 'count' in data:
-                count = data.get('count', 0)
-                if count <= config.THRESHOLD_LOW:
-                    density = 'low'
-                elif count <= config.THRESHOLD_MEDIUM:
-                    density = 'medium'
-                else:
-                    density = 'high'
-                
-                self.traffic.update_traffic_data(count, density)
-        
-        except Exception as e:
-            print(f"[Main] Error processing serial message: {e}")
-    
-    def run(self):
-        print("\nStarting main loop...")
-        print("Press Ctrl+C to stop\n")
-        
-        try:
-            while self.running:
-                self.loop_count += 1
-                
-                if self.serial and self.serial_check_timer.check():
-                    if not self.serial.connected:
-                        print("[Main] Serial disconnected - reconnecting...")
-                        self.serial.connect()
-                    else:
-                        self.serial.check_messages()
-                
-                self.traffic.update()
-                
-                if self.serial and self.watchdog_timer.check():
-                    if not self.serial.is_data_fresh():
-                        if self.traffic.current_density != "low":
-                            print("[Main] ⚠ No fresh data - reverting to normal mode")
-                            self.traffic.update_traffic_data(0, "low")
-                
-                if config.ENABLE_MANUAL_MODE:
-                    self._check_manual_button()
-                
-                if self.status_timer.check():
-                    self._print_status()
-                    
-                    if self.serial and self.serial.connected:
-                        state_info = self.traffic.get_state()
-                        self.serial.send_data(state_info)
-                
-                if self.loop_count % 100 == 0:
-                    gc.collect()
-                
-                time.sleep(0.1)
-        
-        except KeyboardInterrupt:
-            print("\n\nShutdown requested...")
-            self.shutdown()
-        
-        except Exception as e:
-            print(f"\n\nFatal error: {e}")
-            import sys
-            sys.print_exception(e)
-            self.errors += 1
-            self.shutdown()
-    
-    def _check_manual_button(self):
-        current_state = self.button.value()
-        
-        if current_state == 0 and self.last_button_state == 1:
-            print("[Main] Manual button pressed")
-            
-            if self.traffic.current_state == TrafficLightController.STATE_RED:
-                self.traffic.force_state(TrafficLightController.STATE_GREEN)
-            else:
-                self.traffic.force_state(TrafficLightController.STATE_RED)
-            
-            time.sleep(0.5)
-        
-        self.last_button_state = current_state
-    
-    def _print_status(self):
-        uptime = time.time() - self.start_time
-        state = self.traffic.get_state()
-        
-        print("\n" + "-" * 60)
-        print(f"Uptime: {format_uptime(uptime)} | Loops: {self.loop_count}")
-        print(f"Light: {state['state']} | Time: {state['elapsed']:.1f}/{state['duration']}s")
-        print(f"Vehicles: {state['vehicle_count']} | Density: {state['density']}")
-        
-        if self.serial:
-            print(f"Serial: {'Connected' if self.serial.connected else 'Disconnected'} | " +
-                  f"Messages: {self.serial.messages_received}")
-        
-        print("-" * 60)
-    
-    def shutdown(self):
-        print("\nShutting down system...")
-        
-        self.running = False
-        
-        if self.serial and self.serial.connected:
-            self.serial.send_data({'status': 'offline', 'timestamp': int(time.time())})
-            time.sleep(0.5)
-            self.serial.disconnect()
-        
-        if self.led:
-            self.led.all_off()
-        
-        print_header("FINAL STATISTICS")
-        
-        print("\nTraffic Light:")
-        print_dict(self.traffic.get_stats())
-        
-        if self.serial:
-            print("\nSerial:")
-            print_dict(self.serial.get_stats())
-        
-        print(f"\nTotal Loops: {self.loop_count}")
-        print(f"Total Errors: {self.errors}")
-        print(f"Uptime: {format_uptime(time.time() - self.start_time)}")
-        
-        print_header("SYSTEM STOPPED")
+sys.stdout.write("\n" + "=" * 60 + "\n")
+sys.stdout.write(" ESP32 SMART TRAFFIC LIGHT CONTROLLER\n")
+sys.stdout.write("=" * 60 + "\n")
+sys.stdout.write("Firmware Version: 2.1\n")
+sys.stdout.write("=" * 60 + "\n\n")
 
+led = LEDController()
+traffic = TrafficLightController(led)
+serial = SerialHandler()
 
-def main():
-    try:
-        system = SmartTrafficSystem()
+sys.stdout.write("[SYSTEM] All components initialized\n")
+sys.stdout.write("[SYSTEM] Waiting for AI connection...\n")
+sys.stdout.write("[SYSTEM] Status: BLINKING ALL LIGHTS\n\n")
+
+blink_state = False
+ai_started = False
+last_blink = time.time()
+last_check = time.time()
+total_cycles = 0
+start_time = time.time()
+
+led.all_off()
+
+try:
+    while True:
+        now = time.time()
         
-        if system.initialize():
-            system.run()
+        if now - last_check >= 0.01:
+            data = serial.check_messages()
+            
+            if data:
+                counting_time = data.get('time', -1)
+                
+                if counting_time >= 1 and not ai_started:
+                    sys.stdout.write("\n" + "=" * 60 + "\n")
+                    sys.stdout.write(" AI STARTED - BEGIN TRAFFIC CONTROL\n")
+                    sys.stdout.write("=" * 60 + "\n\n")
+                    led.all_off()
+                    ai_started = True
+                    traffic.state_start_time = now
+                    traffic.led.red_on()
+                    sys.stdout.write("[Traffic] Starting with RED light\n\n")
+                
+                if ai_started:
+                    count = data.get('count', 0)
+                    density = data.get('density', 'low')
+                    traffic.update_traffic_data(count, density)
+            
+            if ai_started and (now - serial.last_update_time) > config.WATCHDOG_TIMEOUT:
+                if traffic.current_state == traffic.STATE_RED:
+                    sys.stdout.write("\n" + "=" * 60 + "\n")
+                    sys.stdout.write(" WATCHDOG TIMEOUT - AI CONNECTION LOST\n")
+                    sys.stdout.write(" STATE: RED - RETURNING TO BLINK MODE\n")
+                    sys.stdout.write("=" * 60 + "\n\n")
+                    ai_started = False
+                    led.all_off()
+                    blink_state = False
+                    last_blink = now
+                elif traffic.current_state == traffic.STATE_GREEN:
+                    if not hasattr(traffic, 'waiting_for_cycle'):
+                        sys.stdout.write("\n" + "=" * 60 + "\n")
+                        sys.stdout.write(" WATCHDOG TIMEOUT - AI CONNECTION LOST\n")
+                        sys.stdout.write(" STATE: GREEN - FINISHING CYCLE FIRST\n")
+                        sys.stdout.write("=" * 60 + "\n\n")
+                        traffic.waiting_for_cycle = True
+                elif traffic.current_state == traffic.STATE_YELLOW:
+                    if not hasattr(traffic, 'waiting_for_cycle'):
+                        sys.stdout.write("\n" + "=" * 60 + "\n")
+                        sys.stdout.write(" WATCHDOG TIMEOUT - AI CONNECTION LOST\n")
+                        sys.stdout.write(" STATE: YELLOW - FINISHING CYCLE FIRST\n")
+                        sys.stdout.write("=" * 60 + "\n\n")
+                        traffic.waiting_for_cycle = True
+            
+            last_check = now
+        
+        if ai_started:
+            traffic.update()
+            
+            if hasattr(traffic, 'waiting_for_cycle') and traffic.current_state == traffic.STATE_RED:
+                sys.stdout.write("\n[SYSTEM] Cycle completed - RETURNING TO BLINK MODE\n\n")
+                ai_started = False
+                delattr(traffic, 'waiting_for_cycle')
+                led.all_off()
+                blink_state = False
+                last_blink = now
         else:
-            print("\nSystem initialization failed!")
-            if system.led:
-                system.led.all_off()
+            if now - last_blink >= config.BLINK_INTERVAL:
+                blink_state = not blink_state
+                if blink_state:
+                    led.all_on()
+                else:
+                    led.all_off()
+                last_blink = now
+        
+        time.sleep(0.01)
+        
+        if ai_started and traffic.cycle_count > total_cycles:
+            total_cycles = traffic.cycle_count
+            if total_cycles % 10 == 0:
+                gc.collect()
+
+except KeyboardInterrupt:
+    sys.stdout.write("\n" + "=" * 60 + "\n")
+    sys.stdout.write(" SYSTEM STOPPED\n")
+    sys.stdout.write("=" * 60 + "\n\n")
     
-    except Exception as e:
-        print(f"\nCritical error: {e}")
-        import sys
-        sys.print_exception(e)
+    stats = traffic.get_stats()
+    serial_stats = serial.get_stats()
+    uptime = time.time() - start_time
+    
+    sys.stdout.write("[Traffic Stats]\n")
+    sys.stdout.write(f"  Total Cycles: {stats['cycle_count']}\n")
+    sys.stdout.write(f"  Total Red Time: {stats['total_red_time']}s\n")
+    sys.stdout.write(f"  Total Yellow Time: {stats['total_yellow_time']}s\n")
+    sys.stdout.write(f"  Total Green Time: {stats['total_green_time']}s\n")
+    sys.stdout.write(f"  Time Adjustments: {stats['time_adjustments']}\n")
+    sys.stdout.write("\n[Serial Stats]\n")
+    sys.stdout.write(f"  Messages Received: {serial_stats['rx']}\n")
+    sys.stdout.write(f"\n[System] Uptime: {uptime:.0f}s\n\n")
+    
+    led.all_off()
+    sys.stdout.write("[SYSTEM] Cleanup complete\n\n")
 
-
-if __name__ == "__main__":
-    main()
+except Exception as e:
+    sys.stdout.write(f"\n[ERROR] {e}\n\n")
+    led.all_off()

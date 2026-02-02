@@ -1,9 +1,10 @@
 import time
+import sys
 import config
-from led_controller import LEDController
 
 
 class TrafficLightController:
+    
     STATE_RED = "RED"
     STATE_YELLOW = "YELLOW"
     STATE_GREEN = "GREEN"
@@ -12,38 +13,85 @@ class TrafficLightController:
         self.led = led_controller
         self.current_state = self.STATE_RED
         self.state_start_time = time.time()
-        self.current_duration = config.RED_LIGHT_NORMAL
-        
-        self.auto_mode = True
-        self.manual_override = False
+        self.current_duration = config.RED_LIGHT_MAX
         
         self.current_density = "low"
         self.vehicle_count = 0
+        self.previous_vehicle_count = 0
         
         self.cycle_count = 0
         self.total_red_time = 0
         self.total_yellow_time = 0
         self.total_green_time = 0
-
-        self.led.red_on()
+        self.time_adjustments = 0
         
         if config.DEBUG:
-            print("[Traffic] Controller initialized")
-            print(f"[Traffic] Starting with RED light ({self.current_duration}s)")
+            sys.stdout.write("[Traffic] Controller initialized\n")
     
     def update(self):
-        if self.manual_override:
-            return
-        
         elapsed = time.time() - self.state_start_time
+        
+        if self.current_state == self.STATE_RED:
+            if self._should_reduce_red_time():
+                self._next_state()
+                return
+        
+        elif self.current_state == self.STATE_GREEN:
+            if self._should_switch_to_yellow():
+                self._next_state()
+                return
         
         if elapsed >= self.current_duration:
             self._next_state()
     
+    def _should_reduce_red_time(self):
+        elapsed = time.time() - self.state_start_time
+        
+        if self.vehicle_count >= config.THRESHOLD_CRITICAL:
+            if elapsed >= config.RED_LIGHT_MIN:
+                self.time_adjustments += 1
+                if config.DEBUG:
+                    sys.stdout.write(f"[Traffic] CRITICAL: {self.vehicle_count} vehicles - Switching to GREEN NOW\n")
+                return True
+        
+        if self.vehicle_count >= config.THRESHOLD_HIGH:
+            if self.previous_vehicle_count > 0 and self.vehicle_count > self.previous_vehicle_count:
+                vehicle_increase = self.vehicle_count - self.previous_vehicle_count
+                time_reduction = vehicle_increase * config.TIME_REDUCTION_PER_VEHICLE
+                
+                new_duration = max(config.RED_LIGHT_MIN, self.current_duration - time_reduction)
+                
+                if new_duration < self.current_duration:
+                    self.current_duration = new_duration
+                    self.time_adjustments += 1
+                    
+                    if config.DEBUG:
+                        sys.stdout.write(f"[Traffic] HIGH TRAFFIC: {self.vehicle_count} vehicles (+{vehicle_increase})\n")
+                        sys.stdout.write(f"[Traffic] Reduced RED time to {new_duration}s\n")
+                
+                if elapsed >= new_duration:
+                    return True
+        
+        return False
+    
+    def _should_switch_to_yellow(self):
+        elapsed = time.time() - self.state_start_time
+        
+        if self.vehicle_count < config.THRESHOLD_LOW:
+            if elapsed >= config.GREEN_LIGHT_MIN:
+                self.time_adjustments += 1
+                
+                if config.DEBUG:
+                    sys.stdout.write(f"[Traffic] LOW TRAFFIC: {self.vehicle_count} vehicles - Ending GREEN early\n")
+                
+                return True
+        
+        return False
+    
     def _next_state(self):
         if self.current_state == self.STATE_RED:
             self.current_state = self.STATE_GREEN
-            self.current_duration = config.GREEN_LIGHT_TIME
+            self.current_duration = self._calculate_green_duration()
             self.led.green_on()
             self.total_red_time += time.time() - self.state_start_time
             
@@ -61,86 +109,45 @@ class TrafficLightController:
             self.cycle_count += 1
             
             if config.DEBUG:
-                print(f"[Traffic] Cycle {self.cycle_count} complete")
+                sys.stdout.write(f"[Traffic] Cycle {self.cycle_count} completed\n")
         
         self.state_start_time = time.time()
         
         if config.DEBUG:
-            print(f"[Traffic] State changed to {self.current_state} ({self.current_duration}s)")
+            sys.stdout.write(f"[Traffic] State: {self.current_state} | Duration: {self.current_duration}s | Vehicles: {self.vehicle_count}\n")
     
     def _calculate_red_duration(self):
-        if not self.auto_mode:
-            return config.RED_LIGHT_NORMAL
-        
-        if self.current_density == "high":
-            duration = config.RED_LIGHT_BUSY
-            if config.DEBUG:
-                print(f"[Traffic] HIGH density detected -> RED light {duration}s")
-        
-        elif self.current_density == "medium":
-            duration = config.RED_LIGHT_MEDIUM
-            if config.DEBUG:
-                print(f"[Traffic] MEDIUM density detected -> RED light {duration}s")
-        
+        if self.vehicle_count >= config.THRESHOLD_CRITICAL:
+            duration = config.RED_LIGHT_MIN
+        elif self.vehicle_count >= config.THRESHOLD_HIGH:
+            reduction = (self.vehicle_count - config.THRESHOLD_HIGH) * config.TIME_REDUCTION_PER_VEHICLE
+            duration = config.RED_LIGHT_MAX - reduction
         else:
-            duration = config.RED_LIGHT_NORMAL
-            if config.DEBUG:
-                print(f"[Traffic] LOW density -> RED light {duration}s (normal)")
+            duration = config.RED_LIGHT_MAX
         
-        return duration
+        return max(config.RED_LIGHT_MIN, min(config.RED_LIGHT_MAX, duration))
+    
+    def _calculate_green_duration(self):
+        if self.vehicle_count >= config.THRESHOLD_CRITICAL:
+            duration = config.GREEN_LIGHT_MAX
+        elif self.vehicle_count >= config.THRESHOLD_HIGH:
+            duration = int(config.GREEN_LIGHT_MIN + (config.GREEN_LIGHT_MAX - config.GREEN_LIGHT_MIN) * 0.7)
+        elif self.vehicle_count >= config.THRESHOLD_LOW:
+            duration = int(config.GREEN_LIGHT_MIN + (config.GREEN_LIGHT_MAX - config.GREEN_LIGHT_MIN) * 0.4)
+        else:
+            duration = config.GREEN_LIGHT_MIN
+        
+        return max(config.GREEN_LIGHT_MIN, min(config.GREEN_LIGHT_MAX, duration))
     
     def update_traffic_data(self, vehicle_count, density):
+        self.previous_vehicle_count = self.vehicle_count
         self.vehicle_count = vehicle_count
         self.current_density = density
         
-        if config.DEBUG:
-            print(f"[Traffic] Updated traffic data: {vehicle_count} vehicles, density={density}")
-    
-    def force_state(self, state, duration=None):
-        self.manual_override = True
-        self.current_state = state
-        self.state_start_time = time.time()
-        
-        if duration:
-            self.current_duration = duration
-        else:
-            if state == self.STATE_RED:
-                self.current_duration = config.RED_LIGHT_NORMAL
-            elif state == self.STATE_YELLOW:
-                self.current_duration = config.YELLOW_LIGHT_TIME
-            else:
-                self.current_duration = config.GREEN_LIGHT_TIME
-        
-        if state == self.STATE_RED:
-            self.led.red_on()
-        elif state == self.STATE_YELLOW:
-            self.led.yellow_on()
-        else:
-            self.led.green_on()
-        
-        if config.DEBUG:
-            print(f"[Traffic] Manual override: {state} for {self.current_duration}s")
-    
-    def resume_auto(self):
-        self.manual_override = False
-        self.auto_mode = True
-        if config.DEBUG:
-            print("[Traffic] Resumed auto mode")
-    
-    def get_state(self):
-        elapsed = time.time() - self.state_start_time
-        remaining = max(0, self.current_duration - elapsed)
-        
-        return {
-            'state': self.current_state,
-            'elapsed': round(elapsed, 1),
-            'remaining': round(remaining, 1),
-            'duration': self.current_duration,
-            'auto_mode': self.auto_mode,
-            'manual_override': self.manual_override,
-            'vehicle_count': self.vehicle_count,
-            'density': self.current_density
-        }
+        if config.DEBUG and self.vehicle_count != self.previous_vehicle_count:
+            change = self.vehicle_count - self.previous_vehicle_count
+            symbol = "UP" if change > 0 else "DOWN" if change < 0 else "SAME"
+            sys.stdout.write(f"[Traffic] {symbol} Updated: {self.previous_vehicle_count} -> {self.vehicle_count} vehicles ({density})\n")
     
     def get_stats(self):
         return {
@@ -148,14 +155,6 @@ class TrafficLightController:
             'total_red_time': round(self.total_red_time, 1),
             'total_yellow_time': round(self.total_yellow_time, 1),
             'total_green_time': round(self.total_green_time, 1),
-            'current_state': self.current_state,
-            'auto_mode': self.auto_mode
+            'time_adjustments': self.time_adjustments,
+            'current_state': self.current_state
         }
-
-    def reset_stats(self):
-        self.cycle_count = 0
-        self.total_red_time = 0
-        self.total_yellow_time = 0
-        self.total_green_time = 0
-        if config.DEBUG:
-            print("[Traffic] Statistics reset")
