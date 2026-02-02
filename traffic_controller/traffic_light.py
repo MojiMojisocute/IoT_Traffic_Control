@@ -149,6 +149,20 @@ class TrafficLightController:
             symbol = "UP" if change > 0 else "DOWN" if change < 0 else "SAME"
             sys.stdout.write(f"[Traffic] {symbol} Updated: {self.previous_vehicle_count} -> {self.vehicle_count} vehicles ({density})\n")
     
+    def get_countdown(self):
+        elapsed = time.time() - self.state_start_time
+        remaining = int(self.current_duration - elapsed)
+        return max(0, remaining)
+    
+    def get_light_state(self):
+        if self.current_state == self.STATE_RED:
+            return "red"
+        elif self.current_state == self.STATE_YELLOW:
+            return "yellow"
+        elif self.current_state == self.STATE_GREEN:
+            return "green"
+        return "unknown"
+    
     def get_stats(self):
         return {
             'cycle_count': self.cycle_count,

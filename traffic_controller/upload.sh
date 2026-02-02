@@ -25,7 +25,7 @@ echo "Uploading files to ESP32..."
 echo "----------------------------------------------------------------------"
 echo ""
 
-FILES="boot.py config.py led_controller.py serial_handler.py traffic_light.py main.py"
+FILES="boot.py config.py led_controller.py serial_handler.py traffic_light.py mqtt_handler.py main.py"
 
 for file in $FILES; do
     if [ -f "$file" ]; then

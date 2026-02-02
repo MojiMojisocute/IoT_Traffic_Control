@@ -9,46 +9,61 @@ print("\n" + "=" * 60)
 print(" BOOT SEQUENCE")
 print("=" * 60)
 
+wlan = None
+
 try:
-    print("[BOOT] Connecting to WiFi...")
+    print("[BOOT] Importing config...")
     import config
     
+    print("[BOOT] Initializing WiFi...")
     wlan = network.WLAN(network.STA_IF)
     wlan.active(True)
     
-    if not wlan.isconnected():
+    if wlan.isconnected():
+        print("[BOOT] Already connected")
+        print(f"[BOOT] IP: {wlan.ifconfig()[0]}")
+        print(f"[BOOT] Gateway: {wlan.ifconfig()[2]}")
+    else:
+        print(f"[BOOT] SSID: {config.WIFI_SSID}")
+        print("[BOOT] Connecting...", end="")
+        
+        wlan.disconnect()
+        time.sleep(1)
         wlan.connect(config.WIFI_SSID, config.WIFI_PASSWORD)
         
-        timeout = 15
+        timeout = 20
         while not wlan.isconnected() and timeout > 0:
             print(".", end="")
             time.sleep(1)
             timeout -= 1
         
+        print()
+        
         if wlan.isconnected():
-            print("\n[BOOT] WiFi Connected!")
-            print(f"[BOOT] IP Address: {wlan.ifconfig()[0]}")
+            print("[BOOT] WiFi Connected!")
+            print(f"[BOOT] IP: {wlan.ifconfig()[0]}")
+            print(f"[BOOT] Netmask: {wlan.ifconfig()[1]}")
+            print(f"[BOOT] Gateway: {wlan.ifconfig()[2]}")
+            print(f"[BOOT] DNS: {wlan.ifconfig()[3]}")
         else:
-            print("\n[BOOT] WiFi connection timeout")
-            print("[BOOT] MQTT will be disabled")
-    else:
-        print("[BOOT] Already connected to WiFi")
-        print(f"[BOOT] IP Address: {wlan.ifconfig()[0]}")
+            print("[BOOT] WiFi timeout")
+            print("[BOOT] MQTT disabled")
+            wlan.active(False)
 
 except ImportError:
     print("[BOOT] config.py not found")
-    print("[BOOT] MQTT will be disabled")
+    print("[BOOT] MQTT disabled")
 except Exception as e:
     print(f"[BOOT] WiFi error: {e}")
-    print("[BOOT] MQTT will be disabled")
+    print("[BOOT] MQTT disabled")
+    if wlan:
+        wlan.active(False)
+
+print("=" * 60)
+print()
 
 try:
-    print("[BOOT] Importing main module...")
     import main
-    print("[BOOT] Main module loaded successfully")
 except Exception as e:
-    print("[BOOT] ERROR loading main:")
-    print(f"  {type(e).__name__}: {e}")
+    print(f"[BOOT] Main error: {e}")
     sys.print_exception(e)
-    print("\n[BOOT] System halted - check errors above")
-    print("=" * 60)

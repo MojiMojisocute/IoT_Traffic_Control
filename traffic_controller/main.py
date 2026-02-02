@@ -1,21 +1,49 @@
 import time
 import gc
 import sys
+import network
 import config
 from led_controller import LEDController
 from serial_handler import SerialHandler
 from traffic_light import TrafficLightController
+from mqtt_handler import MQTTHandler
 
 
 sys.stdout.write("\n" + "=" * 60 + "\n")
 sys.stdout.write(" ESP32 SMART TRAFFIC LIGHT CONTROLLER\n")
 sys.stdout.write("=" * 60 + "\n")
-sys.stdout.write("Firmware Version: 2.1\n")
+sys.stdout.write("Firmware Version: 2.2\n")
 sys.stdout.write("=" * 60 + "\n\n")
+
+sys.stdout.write("[MAIN] Checking WiFi...\n")
+wlan = network.WLAN(network.STA_IF)
+wlan.active(True)
+
+if not wlan.isconnected():
+    sys.stdout.write(f"[MAIN] Connecting to {config.WIFI_SSID}...\n")
+    wlan.disconnect()
+    time.sleep(0.5)
+    wlan.connect(config.WIFI_SSID, config.WIFI_PASSWORD)
+    
+    timeout = 15
+    while not wlan.isconnected() and timeout > 0:
+        sys.stdout.write(".")
+        time.sleep(1)
+        timeout -= 1
+    
+    sys.stdout.write("\n")
+
+if wlan.isconnected():
+    sys.stdout.write("[MAIN] WiFi Connected!\n")
+    sys.stdout.write(f"[MAIN] IP: {wlan.ifconfig()[0]}\n")
+    sys.stdout.write(f"[MAIN] Gateway: {wlan.ifconfig()[2]}\n\n")
+else:
+    sys.stdout.write("[MAIN] WiFi Failed - MQTT Disabled\n\n")
 
 led = LEDController()
 traffic = TrafficLightController(led)
 serial = SerialHandler()
+mqtt = MQTTHandler()
 
 sys.stdout.write("[SYSTEM] All components initialized\n")
 sys.stdout.write("[SYSTEM] Waiting for AI connection...\n")
@@ -85,6 +113,13 @@ try:
         if ai_started:
             traffic.update()
             
+            countdown = traffic.get_countdown()
+            light_state = traffic.get_light_state()
+            vehicle_count = serial.get_vehicle_count()
+            density = serial.get_density()
+            
+            mqtt.publish_status(light_state, countdown, vehicle_count, density)
+            
             if hasattr(traffic, 'waiting_for_cycle') and traffic.current_state == traffic.STATE_RED:
                 sys.stdout.write("\n[SYSTEM] Cycle completed - RETURNING TO BLINK MODE\n\n")
                 ai_started = False
@@ -93,6 +128,8 @@ try:
                 blink_state = False
                 last_blink = now
         else:
+            mqtt.publish_status("blink", 0, 0, "none")
+            
             if now - last_blink >= config.BLINK_INTERVAL:
                 blink_state = not blink_state
                 if blink_state:
@@ -115,6 +152,7 @@ except KeyboardInterrupt:
     
     stats = traffic.get_stats()
     serial_stats = serial.get_stats()
+    mqtt_stats = mqtt.get_stats()
     uptime = time.time() - start_time
     
     sys.stdout.write("[Traffic Stats]\n")
@@ -125,11 +163,17 @@ except KeyboardInterrupt:
     sys.stdout.write(f"  Time Adjustments: {stats['time_adjustments']}\n")
     sys.stdout.write("\n[Serial Stats]\n")
     sys.stdout.write(f"  Messages Received: {serial_stats['rx']}\n")
+    sys.stdout.write("\n[MQTT Stats]\n")
+    sys.stdout.write(f"  Connected: {mqtt_stats['connected']}\n")
+    sys.stdout.write(f"  Messages Sent: {mqtt_stats['messages_sent']}\n")
+    sys.stdout.write(f"  Broker: {mqtt_stats['broker']}\n")
     sys.stdout.write(f"\n[System] Uptime: {uptime:.0f}s\n\n")
     
+    mqtt.disconnect()
     led.all_off()
     sys.stdout.write("[SYSTEM] Cleanup complete\n\n")
 
 except Exception as e:
     sys.stdout.write(f"\n[ERROR] {e}\n\n")
+    mqtt.disconnect()
     led.all_off()
